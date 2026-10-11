@@ -2,6 +2,12 @@
 const C=BoardCore,$=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const repo=`https://github.com/${C.REPO}`,names={activity:'실시간 활동',flow:'팀 흐름',next:'다음 작업'};
 let records=[],invalid=[],feed=null,view='activity',team='',kind='all',actor='',query='',selected=null,limit=40,busy=false,loaded=false,lastSuccess=null,feedSuccess=null,errors=[],timer=null,failures=0;
+let mapMode=null,mapEdge='';
+let cachedMapRecords=null,cachedMap=null;
+const graph=()=>{if(cachedMapRecords!==records){cachedMapRecords=records;cachedMap=FlowMap.build(records);}return cachedMap;};
+const currentMapMode=()=>mapMode||(records.length?'live':'guide');
+function mapItems(){return currentMapMode()==='live'?graph().edges.find(e=>e.id===mapEdge)?.items:null;}
+function mapIncludes(number){const items=mapItems();return !items||items.some(i=>i.source.number===number||i.target?.number===number);}
 const teamName=id=>C.TEAMS.find(t=>t.id===id)?.name||id;
 const dot=id=>`<span class="team-dot" style="--team:var(--${id})"></span>`;
 const teamTag=id=>`<span class="team-tag">${dot(id)}${esc(teamName(id))}</span>`;
@@ -11,7 +17,7 @@ const short=(text,n=150)=>String(text||'').length>n?String(text).slice(0,n)+'…
 const fmt=(d,options={month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'})=>Number.isFinite(Date.parse(d))?new Date(d).toLocaleString('ko-KR',options):'시각 미확인';
 const status=r=>r.cancelled?'중단':r.status+(r.closed?' · 닫힘':'');
 const pill=r=>`<span class="pill ${C.ready(r)?'ready':C.blockers(r,records).length?'wait':''}">${esc(status(r))}</span>`;
-const matches=r=>(!team||r.team===team)&&(!query||[r.title,r.question,r.summary,r.handoff,r.next,'#'+r.number].join(' ').toLowerCase().includes(query.toLowerCase()));
+const matches=r=>mapIncludes(r.number)&&(!team||r.team===team)&&(!query||[r.title,r.question,r.summary,r.handoff,r.next,'#'+r.number].join(' ').toLowerCase().includes(query.toLowerCase()));
 const openButton=(r,label)=>`<button data-issue="${r.number}">${esc(label||('#'+r.number+' '+r.title))}</button>`;
 $('#repoLink').href=repo;
 $('#templateList').innerHTML=C.TEAMS.map(t=>`<a class="template-link" href="${repo}/issues/new?template=weekly-${t.id}.yml" target="_blank" rel="noreferrer">${dot(t.id)}${esc(t.name)}<span>↗</span></a>`).join('');
@@ -21,6 +27,7 @@ function render(){
   $('#breadcrumb').textContent=names[view];
   $('#heading').textContent=view==='activity'?'작업은 이어지고, 기록은 쌓입니다.':view==='flow'?'서로의 작업이 연결되는 곳.':'이번 결과에서, 다음 질문으로.';
   $('#subtitle').textContent=view==='activity'?'모든 주차의 활동을 한 흐름으로. 바뀐 내용과 다음 연결을 함께 봅니다.':view==='flow'?'진행 중인 작업과 공유된 결과를 함께 보고, 필요한 자료를 따라갑니다.':'선행 자료를 기다리는 작업, 팀에 전달할 내용, 후속 질문을 모았습니다.';
+  renderConnectionMap();
   document.querySelectorAll('[data-view]').forEach(b=>{b.classList.toggle('active',b.dataset.view===view);b.setAttribute('aria-pressed',b.dataset.view===view)});
   document.querySelectorAll('[data-kind]').forEach(b=>{b.classList.toggle('active',b.dataset.kind===kind);b.setAttribute('aria-pressed',b.dataset.kind===kind)});
   $('#teamNav').innerHTML=C.TEAMS.map(t=>`<button class="team-nav ${team===t.id?'selected':''}" data-team="${t.id}" aria-pressed="${team===t.id}">${dot(t.id)}${t.name}</button>`).join('');
@@ -38,9 +45,22 @@ function render(){
   if(oldIssue===String(selected))$('#inspector').scrollTop=oldInspectorScroll;
   $('#inspector').dataset.issue=String(selected);
 }
+function renderConnectionMap(){
+  const mapScroll=$('#flowMap .map-viewport')?.scrollLeft||0,listOpen=$('#flowMap .map-accessible')?.open||false;
+  const model=graph(),mode=currentMapMode(),edges=mode==='guide'?FlowMap.guide:model.edges;
+  const chosen=edges.find(e=>e.id===mapEdge),visible=edges.filter(e=>!team||e.source===team||e.target===team);
+  const routes=visible.map(e=>`<button class="map-route-choice ${chosen?.id===e.id?'active':''}" data-map-edge="${e.id}" aria-pressed="${chosen?.id===e.id}"><span>${esc(teamName(e.source))} <b>→</b> ${esc(teamName(e.target))}</span><small>${esc(e.label)}</small></button>`).join('');
+  const relationItem=i=>`<div class="map-item"><div><small>보내는 작업 · ${esc(teamName(i.source.team))}</small>${openButton(i.source)}<p>${esc(short(i.source.handoff||i.source.summary,200))}</p></div><span class="map-item-arrow">→</span><div><small>${i.target?'이어받는 작업':'전달 예정 팀'}</small>${i.target?openButton(i.target):esc(teamName(chosen.target))}<p>${i.kind==='planned'?'아직 구체적인 후속 Issue가 연결되지 않았습니다.':i.state==='ready'?'선행 자료 공유 완료':i.state==='stopped'?'중단된 작업이 포함되어 있습니다.':'선행 자료의 검토·공유를 기다립니다.'}</p></div></div>`;
+  let detail='';
+  if(chosen){const recent=(feed?.events||[]).filter(e=>chosen.items.some(i=>i.source.number===e.issue||i.target?.number===e.issue))[0];detail=`<div class="map-selection"><div class="map-selection-title">${teamTag(chosen.source)}<span>→</span>${teamTag(chosen.target)}<button data-map-reset>선택 해제 ×</button></div>${mode==='guide'?`<h3>${esc(chosen.label)}</h3><p>${esc(chosen.detail)}</p><small>역할을 바탕으로 한 협업 구조 안내입니다. 실제 작업 연결은 Issue에서 지정합니다.</small>`:`${recent?`<p class="map-recent">최근 활동: @${esc(recent.actor)} · ${esc(recent.action)} · ${esc(fmt(recent.at))}</p>`:''}${chosen.items.map(relationItem).join('')}`}</div>`;}
+  else if(team)detail=`<div class="map-selection"><div class="map-selection-title">${teamTag(team)}<span>들어오는 자료와 나가는 자료</span><button data-map-reset>전체 보기 ×</button></div><div class="map-route-grid">${routes||'<p>아직 연결된 작업이 없습니다.</p>'}</div></div>`;
+  $('#flowMap').innerHTML=`<div class="map-heading"><div><h2>팀 연결 지도</h2><p>${mode==='guide'?'협업 구조 안내 · 실제 Issue 연결이 아닙니다.':`실제 작업 연결 ${model.edges.length}개 · 모든 주차 누적${model.unresolved.length?' · 확인되지 않은 선행 Issue '+model.unresolved.length+'개':''}`}</p></div><div class="map-mode"><button data-map-mode="live" class="${mode==='live'?'active':''}" aria-pressed="${mode==='live'}">실제 작업 연결</button><button data-map-mode="guide" class="${mode==='guide'?'active':''}" aria-pressed="${mode==='guide'}">협업 구조 안내</button></div></div><div class="map-viewport" tabindex="0" aria-label="팀 연결 지도. 작은 화면에서는 좌우로 스크롤할 수 있습니다.">${FlowMap.diagram({records,mode,team,selectedEdge:mapEdge,issue:selected})}</div><div class="map-legend">${mode==='guide'?'<span>화살표: 팀이 주고받는 자료와 피드백</span>':'<span><i class="key-line"></i>실선: 선행 작업</span><span><i class="key-line dashed"></i>점선: 전달 예정</span><span><i class="key-dot waiting"></i>자료 대기</span><span><i class="key-dot ready"></i>공유 완료</span>'}<span class="map-tip">팀 또는 화살표를 눌러 연결 내용 보기</span></div>${mode==='live'&&!model.edges.length?'<p class="map-zero">아직 연결된 Issue가 없습니다. 선행 Issue나 영향받는 팀을 지정하면 화살표가 나타납니다.</p>':''}${detail}<details class="map-accessible"><summary>연결 목록으로 보기 (${edges.length})</summary><div class="map-route-grid">${edges.map(e=>`<button class="map-route-choice" data-map-edge="${e.id}">${esc(teamName(e.source))} → ${esc(teamName(e.target))}<small>${esc(e.label)}</small></button>`).join('')||'<p>등록된 연결 없음</p>'}</div></details>`;
+  $('#flowMap .map-viewport').scrollLeft=mapScroll;
+  $('#flowMap .map-accessible').open=listOpen;
+}
 function empty(title,body,write=false){return `<div class="empty"><div class="empty-glyph"><i>≡</i>→<i>↗</i></div><h2>${esc(title)}</h2><p>${esc(body)}</p>${write?'<button data-compose class="primary">첫 작업 기록하기 ↗</button><small>GitHub Issue 작성 · 5개 팀 전용 양식</small>':''}</div>`;}
 function renderActivity(){
-  const events=(feed?.events||[]).filter(e=>(!team||e.team===team)&&(!actor||e.actor===actor)&&(kind==='all'||kind===e.kind)&&(!query||[e.title,e.actor,e.action,'#'+e.issue,...e.changes.flatMap(c=>[c.field,c.before,c.after])].join(' ').toLowerCase().includes(query.toLowerCase())));
+  const events=(feed?.events||[]).filter(e=>mapIncludes(e.issue)&&(!team||e.team===team)&&(!actor||e.actor===actor)&&(kind==='all'||kind===e.kind)&&(!query||[e.title,e.actor,e.action,'#'+e.issue,...e.changes.flatMap(c=>[c.field,c.before,c.after])].join(' ').toLowerCase().includes(query.toLowerCase())));
   if(!events.length){$('#content').innerHTML=empty(busy&&!feed?'활동 기록을 불러오고 있습니다.':team||actor||query||kind!=='all'?'조건에 맞는 활동이 없습니다.':'첫 번째 기록이 흐름을 만듭니다.',team||actor||query||kind!=='all'?'검색어나 팀·업데이트자 필터를 바꿔보세요.':records.length?'등록된 작업은 ‘팀 흐름’에서 볼 수 있습니다. 활동 수집이 시작되면 누가 무엇을 바꿨는지 이곳에 쌓입니다.':'각 팀이 GitHub에 작업을 남기면 변경 내용과 대화, 이어받을 팀을 여기서 함께 볼 수 있습니다.',!team&&!actor&&!query&&kind==='all')+`<div class="guide-steps"><div><span>01 / RECORD</span><h3>질문과 결과를 기록</h3><p>팀 양식으로 Issue를 작성하고<br>진행하며 내용을 업데이트합니다.</p></div><div><span>02 / CONNECT</span><h3>다음 사람에게 연결</h3><p>선행 Issue와 전달할 팀을 적어<br>작업 사이의 관계를 만듭니다.</p></div><div><span>03 / FOLLOW</span><h3>변화의 흐름을 확인</h3><p>누가, 무엇을 바꿨는지 보고<br>이어갈 질문을 찾습니다.</p></div></div>`;return;}
   let day='';$('#content').innerHTML=events.slice(0,limit).map(e=>{const current=fmt(e.at,{year:'numeric',month:'long',day:'numeric'}),heading=current!==day?`<div class="date-group"><span>${current}</span><span>${day?'':'최근 활동부터'}</span></div>`:'';day=current;const change=e.changes.find(c=>['작업·결과 요약','진행 상태','전달 내용·요청할 결정','다음 주 질문','댓글'].includes(c.field))||e.changes[0];return heading+`<article class="activity-row ${selected===e.issue?'selected':''}"><span class="avatar">${Number.isSafeInteger(e.actorId)?`<img src="https://avatars.githubusercontent.com/u/${e.actorId}?s=64" alt="" loading="lazy">`:esc(e.actor.slice(0,2).toUpperCase())}</span><div class="event-body"><div class="event-meta"><strong>@${esc(e.actor)}</strong><span>${esc(e.action)}</span><time title="${esc(fmt(e.at))}${e.timeSource==='collected'?' · 수집 시각':''}">${fmt(e.at,{hour:'2-digit',minute:'2-digit'})}${e.timeSource==='collected'?' 수집':''}</time></div><button class="issue-title" data-issue="${e.issue}"><small>#${e.issue}</small> ${esc(e.title)}</button>${change?`<div class="change-preview"><b>${esc(change.field)}</b>${change.before?`<div class="before">${esc(short(change.before,90))}</div>`:''}${esc(short(change.after,170)||'내용 삭제')}</div>`:''}<div class="event-bottom">${teamTag(e.team)}<span class="week-tag">${esc(e.week)}</span>${e.targets?.length?`<span>→ ${esc(e.targets.map(teamName).join(' · '))}</span>`:''}</div>${e.changes.length?`<details class="event-diff" data-key="${esc(e.id)}"><summary>변경 전후 보기 · ${e.changes.length}개 항목</summary>${e.changes.map(c=>`<div class="diff-row"><h4>${esc(c.field)}</h4><div class="diff-value old"><small>이전</small>${esc(c.before)||'비어 있음'}</div><div class="diff-value new"><small>이후</small>${esc(c.after)||'비어 있음'}</div></div>`).join('')}<p class="muted">항목별 최대 1,400자 요약 · ${issueLink(e.issue)}</p></details>`:''}</div></article>`;}).join('')+(events.length>limit?`<button class="load-more" id="loadMore">이전 활동 더 보기 (${limit} / ${events.length}) ↓</button>`:`<div class="date-group"><span>수집된 기록의 시작</span><span>${feed?.recordedSince?fmt(feed.recordedSince,{year:'numeric',month:'short',day:'numeric'}):''}</span></div>`);
 }
@@ -65,7 +85,21 @@ async function refresh(){
   if(results[1].status==='fulfilled'){if(results[1].value){feed=results[1].value;feedSuccess=new Date().toISOString();}else if(feed)errors.push('활동 기록을 찾지 못했습니다. 마지막 성공 자료를 유지합니다.');}else errors.push('활동 조회 실패: '+results[1].reason.message+(feed?' 마지막 성공 자료를 유지합니다.':''));
   failures=errors.length?failures+1:0;busy=false;render();schedule();
 }
-document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.view){view=b.dataset.view;render()}if(b.hasAttribute('data-team')){team=team===b.dataset.team?'':b.dataset.team;limit=40;render()}if(b.dataset.kind){kind=b.dataset.kind;limit=40;render()}if(b.dataset.issue){selected=Number(b.dataset.issue);render();if(window.innerWidth<=950)$('#inspector').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'})}if(b.hasAttribute('data-clear-selection')){selected=null;render()}if(b.hasAttribute('data-compose')||b.id==='write')$('#composer').showModal();if(b.id==='loadMore'){limit+=40;render()}});
-$('#closeComposer').onclick=()=>$('#composer').close();$('#clearTeam').onclick=()=>{team='';render()};$('#refresh').onclick=refresh;$('#auto').onchange=schedule;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('#auto').checked&&(!lastSuccess||Date.now()-Date.parse(lastSuccess)>300000))refresh();else schedule()});$('#search').oninput=e=>{query=e.target.value;limit=40;render()};$('#actor').onchange=e=>{actor=e.target.value;limit=40;render()};
+document.addEventListener('click',e=>{const b=e.target.closest('button');if(!b)return;if(b.dataset.view){view=b.dataset.view;render()}if(b.hasAttribute('data-team')){mapEdge='';selected=null;team=team===b.dataset.team?'':b.dataset.team;limit=40;render()}if(b.dataset.kind){kind=b.dataset.kind;limit=40;render()}if(b.dataset.issue){selected=Number(b.dataset.issue);render();if(window.innerWidth<=950)$('#inspector').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'})}if(b.hasAttribute('data-clear-selection')){selected=null;render()}if(b.hasAttribute('data-compose')||b.id==='write')$('#composer').showModal();if(b.id==='loadMore'){limit+=40;render()}});
+$('#closeComposer').onclick=()=>$('#composer').close();$('#clearTeam').onclick=()=>{team='';mapEdge='';selected=null;render()};$('#refresh').onclick=refresh;$('#auto').onchange=schedule;document.addEventListener('visibilitychange',()=>{if(!document.hidden&&$('#auto').checked&&(!lastSuccess||Date.now()-Date.parse(lastSuccess)>300000))refresh();else schedule()});$('#search').oninput=e=>{query=e.target.value;limit=40;render()};$('#actor').onchange=e=>{actor=e.target.value;limit=40;render()};
+function mapAction(e){
+  const el=e.target.closest('[data-map-team],[data-map-edge],[data-map-mode],[data-map-reset]');if(!el)return;
+  if(e.type==='keydown'&&!['Enter',' '].includes(e.key))return;
+  if(e.type==='keydown'&&el.tagName.toLowerCase()==='button')return;
+  e.preventDefault();
+  if(el.hasAttribute('data-map-mode')){mapMode=el.dataset.mapMode;mapEdge='';selected=null;team='';}
+  else if(el.hasAttribute('data-map-reset')){mapEdge='';team='';selected=null;}
+  else if(el.hasAttribute('data-map-team')){team=team===el.dataset.mapTeam?'':el.dataset.mapTeam;mapEdge='';selected=null;}
+  else{mapEdge=mapEdge===el.dataset.mapEdge?'':el.dataset.mapEdge;team='';selected=null;}
+  const focusKey=['mapMode','mapTeam','mapEdge','mapReset'].find(k=>Object.hasOwn(el.dataset,k)),focusValue=el.dataset[focusKey];
+  render();
+  [...document.querySelectorAll('[data-map-team],[data-map-edge],[data-map-mode],[data-map-reset]')].find(n=>n.dataset[focusKey]===focusValue&&n.tagName===el.tagName)?.focus({preventScroll:true});
+}
+document.addEventListener('click',mapAction);document.addEventListener('keydown',mapAction);
 $('#export').onclick=()=>{const u=URL.createObjectURL(new Blob([JSON.stringify({repository:C.REPO,issuesSyncedAt:lastSuccess,activitySyncedAt:feedSuccess,records,invalid,activity:feed},null,2)],{type:'application/json'})),a=document.createElement('a');a.href=u;a.download='science-agent-activity.json';a.click();setTimeout(()=>URL.revokeObjectURL(u),1000)};
 refresh();

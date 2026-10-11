@@ -21,6 +21,14 @@ GitHub Issue가 작업의 원본입니다. 모든 주차의 작업을 한곳에�
 
 ## 화면 읽는 법
 
+첫 화면의 **팀 연결 지도**에서 자료가 어느 팀에서 어느 팀으로 전달되는지 확인합니다. 노드 위치는 고정되어 새 기록이 들어와도 팀의 위치가 바뀌지 않습니다. 선택은 현재 화면에서 유지하며 새로 열면 전체 흐름부터 표시합니다.
+
+- **협업 구조 안내**는 역할에 따른 기본적인 자료·피드백 흐름입니다. 실제 Issue 연결과 구분되어 있으며 작업이 아직 없을 때 기본으로 표시합니다.
+- **실제 작업 연결**은 모든 주차의 `선행 Issue`와 `영향받는 팀`에서만 만듭니다. 실선은 선행 자료 → 그 자료를 사용하는 작업, 점선은 후속 Issue가 아직 없는 전달 예정입니다. 선행 자료가 공유 완료인지, 대기·중단인지 글자와 색으로 함께 표시합니다.
+- 팀을 누르면 들어오고 나가는 연결이 강조됩니다. 화살표를 누르면 양쪽 Issue, 전달 내용, 최근 업데이트자, 대기 상태가 펼쳐지고 아래 활동도 관련 기록으로 좁혀집니다. `선택 해제`로 전체를 볼 수 있습니다.
+- 모바일에서는 지도를 좌우로 움직일 수 있고, `연결 목록으로 보기`에서 같은 연결을 선택할 수 있습니다. 팀과 화살표는 키보드 Tab 및 Enter/Space로도 선택합니다.
+- 확인되지 않은 선행 Issue는 팀을 추정해 그리지 않습니다. 지도에는 확인 필요 개수를 표시하고, 작업 상세·다음 작업에서 해당 번호를 확인합니다.
+
 - **실시간 활동**: 등록·수정·종료·재개·담당자 변경·댓글 활동을 날짜순으로 누적합니다. GitHub 계정, 변경 항목의 전후, 영향받는 팀을 표시합니다. 팀·업데이트자·활동 유형·검색으로 좁힐 수 있습니다. 오래된 활동은 `이전 활동 더 보기`로 이어 봅니다.
 - **팀 흐름**: 모든 주차의 작업을 팀별로 모아 봅니다. 작업을 선택하면 선행 자료와 그 결과를 사용하는 후속 Issue를 확인합니다.
 - **다음 작업**: 선행 자료 대기, 다른 팀에 전달할 내용, 결과에서 이어갈 질문을 모읍니다. 공유 전인 전달 요청은 별도로 표시합니다.
@@ -55,7 +63,7 @@ GitHub Issue가 작업의 원본입니다. 모든 주차의 작업을 한곳에�
 
 ## 개발·배포
 
-`tools/team-board/index.html`, `style.css`, `board-core.js`, `app.js`를 함께 정적 호스팅합니다. 외부 빌드 의존성은 없습니다. 단일 HTML 생성:
+`tools/team-board/index.html`, `style.css`, `board-core.js`, `flow-map.js`, `app.js`를 함께 정적 호스팅합니다. 지도는 5개 팀을 고정 배치한 SVG이며 별도 그래프 라이브러리 없이 선택·초점·목록 보기를 제공합니다. 외부 빌드 의존성은 없습니다. 단일 HTML 생성:
 
 ```sh
 node tools/team-board/package-standalone.cjs /absolute/path/team-flow.html
@@ -64,7 +72,7 @@ node tools/team-board/package-standalone.cjs /absolute/path/team-flow.html
 Issue 데이터 변경은 사이트 재배포 없이 반영됩니다. 화면·파서 변경에는 재배포가 필요합니다. 워크플로는 기본 브랜치 코드만 checkout하며 Issue 내용을 명령어로 실행하지 않습니다.
 
 ```sh
-node --test tools/team-board/board-core.test.cjs tools/team-board/activity-writer.test.cjs
+node --test tools/team-board/board-core.test.cjs tools/team-board/activity-writer.test.cjs tools/team-board/flow-map.test.cjs
 node --check tools/team-board/app.js
 node tools/team-board/generate-forms.cjs
 ```
