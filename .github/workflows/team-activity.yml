@@ -1,0 +1,25 @@
+name: Record team activity
+on:
+  issues:
+    types: [opened, edited, closed, reopened, assigned, unassigned, deleted]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  record:
+    if: github.repository == 'Pseudo-Lab/Science-Agent-Leaderboard' && !github.event.issue.pull_request
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - name: Append normalized activity with optimistic retries
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node tools/team-board/activity-writer.cjs
+# No concurrency group: GitHub can discard pending runs in a group.
+# The writer retries non-fast-forward updates instead of losing parallel events.

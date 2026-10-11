@@ -4,7 +4,7 @@ title: "[주간][Leaderboard] "
 body:
   - type: markdown
     attributes:
-      value: "주간 연결 보드가 이 Issue를 읽습니다. 필드 제목을 유지하고, 담당자는 Assignees로 지정해주세요. 공개 가능한 요약과 링크만 작성하며 개인정보·원시 로그·프롬프트·비공개 정답·인증정보는 포함하지 않습니다."
+      value: "누적 활동 보드가 이 Issue와 변경 이력을 읽습니다. 주차가 바뀌어도 기존 작업과 기록은 유지됩니다. 필드 제목을 유지하고, 담당자는 Assignees로 지정해주세요. 공개 가능한 요약과 링크만 작성하며 개인정보·원시 로그·프롬프트·비공개 정답·인증정보는 포함하지 않습니다."
   - type: dropdown
     id: schema
     attributes:

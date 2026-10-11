@@ -19,5 +19,18 @@
   function blockers(record,records){const byId=new Map(records.map(r=>[r.number,r]));return record.dependencies.filter(n=>!ready(byId.get(n))).map(n=>({number:n,record:byId.get(n)||null}));}
   function connections(records,week){const byId=new Map(records.map(r=>[r.number,r])),result=[];for(const target of records.filter(r=>r.week===week)){for(const id of target.dependencies){const source=byId.get(id);if(source)result.push({source,target,kind:'dependency'});}}for(const source of records.filter(r=>r.week===week)){for(const team of source.targets){if(team!==source.team&&!result.some(e=>e.source.number===source.number&&e.target.team===team))result.push({source,target:{team,week},kind:'planned'});}}return result;}
   async function fetchIssues(fetcher=fetch){const all=[];for(let page=1;page<=20;page++){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);let response;try{response=await fetcher(`https://api.github.com/repos/${REPO}/issues?state=all&sort=created&direction=asc&per_page=100&page=${page}`,{headers:{Accept:'application/vnd.github+json'},signal:controller.signal,cache:'no-store'});if(!response.ok){const reset=response.headers.get('x-ratelimit-reset');throw Error(response.status===403||response.status===429?'GitHub 요청 한도 또는 접근 제한입니다.'+(reset?' 재시도 가능 시각: '+new Date(Number(reset)*1000).toLocaleTimeString('ko-KR'):' 잠시 후 다시 시도해주세요.'):response.status===404?'저장소를 찾을 수 없습니다. 공개 상태와 주소를 확인해주세요.':`GitHub 응답 오류 (${response.status})`);}const batch=await response.json();if(!Array.isArray(batch))throw Error('GitHub 응답 형식이 올바르지 않습니다.');all.push(...batch);if(!(response.headers.get('link')||'').includes('rel="next"'))return all;}catch(e){if(e.name==='AbortError')throw Error('GitHub 요청 시간이 초과되었습니다. 다시 불러와주세요.');throw e;}finally{clearTimeout(timer);}}throw Error('조회가 2,000개를 초과했습니다. 일부 결과를 완료로 표시하지 않았습니다. 조회 범위를 좁히는 설정이 필요합니다.');}
-  return {REPO,TEAMS,STATUS,FIELDS,sections,safeUrl,dependencies,parseIssue,parseAll,ready,blockers,connections,fetchIssues};
+  function normalizeFeed(data){
+    if(data?.version!==1||!Array.isArray(data.events))throw Error('활동 기록 형식을 확인해주세요.');
+    const seen=new Set();
+    const events=data.events.map(e=>{
+      if(!e||typeof e.id!=='string'||!Number.isSafeInteger(e.issue)||!TEAMS.some(t=>t.id===e.team)||!Number.isFinite(Date.parse(e.at))||typeof e.actor!=='string'||!/^[a-zA-Z0-9\[\]-]+$/.test(e.actor)||typeof e.title!=='string'||typeof e.action!=='string'||!['issue','comment'].includes(e.kind)||!Array.isArray(e.changes)||!Array.isArray(e.targets)||e.targets.some(t=>!TEAMS.some(x=>x.id===t)))throw Error('활동 기록에 잘못된 항목이 있습니다.');
+      return {...e,changes:e.changes.filter(c=>typeof c.field==='string'&&typeof c.before==='string'&&typeof c.after==='string')};
+    }).filter(e=>{if(seen.has(e.id))return false;seen.add(e.id);return true;}).sort((a,b)=>b.at.localeCompare(a.at)||b.id.localeCompare(a.id));
+    return {...data,events};
+  }
+  async function fetchActivity(fetcher=fetch){
+    const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
+    try{const r=await fetcher(`https://raw.githubusercontent.com/${REPO}/team-activity-data/feed.json`,{signal:controller.signal,cache:'no-store'});if(r.status===404)return null;if(!r.ok)throw Error(`활동 기록 응답 오류 (${r.status})`);return normalizeFeed(await r.json());}catch(e){if(e.name==='AbortError')throw Error('활동 기록 요청 시간이 초과되었습니다.');throw e;}finally{clearTimeout(timer);}
+  }
+  return {REPO,TEAMS,STATUS,FIELDS,sections,safeUrl,dependencies,parseIssue,parseAll,ready,blockers,connections,fetchIssues,normalizeFeed,fetchActivity};
 });
