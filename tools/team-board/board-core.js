@@ -30,7 +30,9 @@
   }
   async function fetchActivity(fetcher=fetch){
     const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);
-    try{const r=await fetcher(`https://raw.githubusercontent.com/${REPO}/team-activity-data/feed.json`,{signal:controller.signal,cache:'no-store'});if(r.status===404)return null;if(!r.ok)throw Error(`활동 기록 응답 오류 (${r.status})`);return normalizeFeed(await r.json());}catch(e){if(e.name==='AbortError')throw Error('활동 기록 요청 시간이 초과되었습니다.');throw e;}finally{clearTimeout(timer);}
+    // The raw branch CDN may keep an older feed after Actions succeeds, even with no-store.
+    // Contents with the raw media type resolves the current branch through the GitHub API.
+    try{const r=await fetcher(`https://api.github.com/repos/${REPO}/contents/feed.json?ref=team-activity-data`,{headers:{Accept:'application/vnd.github.raw+json'},signal:controller.signal,cache:'no-store'});if(r.status===404)return null;if(!r.ok)throw Error(r.status===403||r.status===429?'활동 기록 조회가 GitHub 요청 한도 또는 접근 제한에 걸렸습니다. 잠시 후 다시 시도해주세요.':`활동 기록 응답 오류 (${r.status})`);return normalizeFeed(await r.json());}catch(e){if(e.name==='AbortError')throw Error('활동 기록 요청 시간이 초과되었습니다.');throw e;}finally{clearTimeout(timer);}
   }
   return {REPO,TEAMS,STATUS,FIELDS,sections,safeUrl,dependencies,parseIssue,parseAll,ready,blockers,connections,fetchIssues,normalizeFeed,fetchActivity};
 });
